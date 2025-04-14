@@ -1,0 +1,482 @@
+{% extends "layout.html" %}
+
+{% block title %}History{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1>Change History</h1>
+    <div>
+        <button id="refresh-history-btn" class="btn btn-outline-info">
+            <i class="fas fa-sync-alt"></i> Refresh Data
+        </button>
+    </div>
+</div>
+
+<div id="loading-container" class="text-center my-5">
+    <div class="spinner-border text-info" role="status">
+        <span class="visually-hidden">Loading...</span>
+    </div>
+    <p class="mt-2">Loading history data...</p>
+</div>
+
+<div id="error-container" class="alert alert-danger d-none">
+    <i class="fas fa-exclamation-triangle"></i> 
+    <span id="error-message">Error loading product history.</span>
+</div>
+
+<div id="history-container" class="d-none">
+    <!-- Timeline of all changes -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">
+                <i class="fas fa-history"></i> Complete Timeline
+            </h5>
+        </div>
+        <div class="card-body">
+            <div id="timeline-container">
+                <div class="timeline">
+                    <!-- Timeline items will be inserted here dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Price History Chart -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">
+                <i class="fas fa-chart-line"></i> Price History
+            </h5>
+        </div>
+        <div class="card-body">
+            <canvas id="full-price-chart" height="300"></canvas>
+        </div>
+    </div>
+
+    <!-- Availability History -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">
+                <i class="fas fa-check-circle"></i> Availability History
+            </h5>
+        </div>
+        <div class="card-body">
+            <div id="availability-history-container">
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>Date & Time</th>
+                                <th>Status</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="availability-table-body">
+                            <!-- Availability entries will be inserted here dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- All Snapshots Table -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="fas fa-camera"></i> All Snapshots
+            </h5>
+            <div>
+                <button id="expand-all-btn" class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-expand-alt"></i> Expand All
+                </button>
+                <button id="collapse-all-btn" class="btn btn-sm btn-outline-secondary ms-2">
+                    <i class="fas fa-compress-alt"></i> Collapse All
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>Date & Time</th>
+                            <th>Price</th>
+                            <th>Available</th>
+                            <th>Changes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="snapshots-table-body">
+                        <!-- Snapshot entries will be inserted here dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/chart.js') }}"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Load history data
+    fetchHistoryData();
+    
+    // Event listeners for expand/collapse all buttons
+    document.getElementById('expand-all-btn').addEventListener('click', function() {
+        document.querySelectorAll('.snapshot-details').forEach(el => el.classList.remove('d-none'));
+    });
+    
+    document.getElementById('collapse-all-btn').addEventListener('click', function() {
+        document.querySelectorAll('.snapshot-details').forEach(el => el.classList.add('d-none'));
+    });
+    
+    // Refresh history button
+    document.getElementById('refresh-history-btn').addEventListener('click', function() {
+        fetchHistoryData();
+    });
+});
+
+function fetchHistoryData() {
+    document.getElementById('loading-container').classList.remove('d-none');
+    document.getElementById('error-container').classList.add('d-none');
+    document.getElementById('history-container').classList.add('d-none');
+    
+    fetch('/api/history')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch history data');
+            }
+            return response.json();
+        })
+        .then(data => {
+            populateHistoryData(data);
+            document.getElementById('loading-container').classList.add('d-none');
+            document.getElementById('history-container').classList.remove('d-none');
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('loading-container').classList.add('d-none');
+            document.getElementById('error-container').classList.remove('d-none');
+            document.getElementById('error-message').textContent = error.message;
+        });
+}
+
+function populateHistoryData(data) {
+    // Sort data by timestamp (newest first)
+    data.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    // Populate timeline
+    const timelineContainer = document.querySelector('.timeline');
+    timelineContainer.innerHTML = '';
+    
+    if (data.length === 0) {
+        timelineContainer.innerHTML = '<p class="text-center text-muted">No historical data available yet</p>';
+    } else {
+        // Create timeline items
+        data.forEach((snapshot, index) => {
+            const timelineItem = document.createElement('div');
+            timelineItem.className = 'timeline-item';
+            
+            const date = new Date(snapshot.timestamp);
+            const formattedDate = date.toLocaleString();
+            
+            let changeDesc = '';
+            if (snapshot.changes && Object.keys(snapshot.changes).length > 0) {
+                if (snapshot.changes.initial) {
+                    changeDesc = '<span class="badge bg-info">Initial Snapshot</span>';
+                } else {
+                    const changeTypes = Object.keys(snapshot.changes);
+                    changeDesc = changeTypes.map(type => {
+                        let badge = 'bg-secondary';
+                        if (type === 'price') badge = 'bg-warning';
+                        if (type === 'available') badge = 'bg-success';
+                        return `<span class="badge ${badge}">${type}</span>`;
+                    }).join(' ');
+                }
+            } else {
+                changeDesc = '<span class="badge bg-secondary">No Changes</span>';
+            }
+            
+            timelineItem.innerHTML = `
+                <div class="timeline-marker"></div>
+                <div class="timeline-content">
+                    <h5 class="mb-1">${formattedDate}</h5>
+                    <p>${changeDesc}</p>
+                    ${snapshot.price ? `<div class="price-tag">$${snapshot.price.toFixed(2)}</div>` : ''}
+                    <div class="mt-2">
+                        <button class="btn btn-sm btn-outline-info view-details-btn" data-index="${index}">
+                            View Details
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            timelineContainer.appendChild(timelineItem);
+        });
+        
+        // Add event listeners to view detail buttons
+        document.querySelectorAll('.view-details-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const index = parseInt(this.getAttribute('data-index'));
+                const row = document.querySelector(`#snapshot-row-${index}`);
+                if (row) {
+                    row.scrollIntoView({ behavior: 'smooth' });
+                    const details = row.nextElementSibling.querySelector('.snapshot-details');
+                    details.classList.toggle('d-none');
+                }
+            });
+        });
+    }
+    
+    // Populate price chart
+    const priceData = data
+        .filter(snapshot => snapshot.price !== null)
+        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    
+    if (priceData.length > 0) {
+        const ctx = document.getElementById('full-price-chart').getContext('2d');
+        
+        // Create the chart
+        renderPriceChart(ctx, priceData, 'all');
+    }
+    
+    // Populate availability history
+    const availabilityBody = document.getElementById('availability-table-body');
+    availabilityBody.innerHTML = '';
+    
+    if (data.length === 0) {
+        availabilityBody.innerHTML = `
+            <tr>
+                <td colspan="3" class="text-center text-muted">No availability data yet</td>
+            </tr>
+        `;
+    } else {
+        // Filter for availability changes
+        const availabilityChanges = data.filter(snapshot => 
+            snapshot.changes && 
+            (snapshot.changes.available || snapshot.changes.availability_text || snapshot.changes.initial)
+        );
+        
+        if (availabilityChanges.length === 0) {
+            availabilityBody.innerHTML = `
+                <tr>
+                    <td colspan="3" class="text-center text-muted">No availability changes detected yet</td>
+                </tr>
+            `;
+        } else {
+            availabilityChanges.forEach(snapshot => {
+                const date = new Date(snapshot.timestamp);
+                const formattedDate = date.toLocaleString();
+                
+                const row = document.createElement('tr');
+                row.className = snapshot.available ? 'table-success' : 'table-danger';
+                
+                row.innerHTML = `
+                    <td>${formattedDate}</td>
+                    <td>
+                        <span class="badge ${snapshot.available ? 'bg-success' : 'bg-danger'}">
+                            ${snapshot.available ? 'Available' : 'Unavailable'}
+                        </span>
+                    </td>
+                    <td>${snapshot.availability_text || 'N/A'}</td>
+                `;
+                
+                availabilityBody.appendChild(row);
+            });
+        }
+    }
+    
+    // Populate snapshots table
+    const snapshotsBody = document.getElementById('snapshots-table-body');
+    snapshotsBody.innerHTML = '';
+    
+    if (data.length === 0) {
+        snapshotsBody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center text-muted">No snapshots available yet</td>
+            </tr>
+        `;
+    } else {
+        data.forEach((snapshot, index) => {
+            const date = new Date(snapshot.timestamp);
+            const formattedDate = date.toLocaleString();
+            
+            // Create main row
+            const row = document.createElement('tr');
+            row.id = `snapshot-row-${index}`;
+            
+            let changesBadges = '';
+            if (snapshot.changes && Object.keys(snapshot.changes).length > 0) {
+                if (snapshot.changes.initial) {
+                    changesBadges = '<span class="badge bg-info">Initial Snapshot</span>';
+                } else {
+                    const changeTypes = Object.keys(snapshot.changes);
+                    changesBadges = changeTypes.map(type => {
+                        let badge = 'bg-secondary';
+                        if (type === 'price') badge = 'bg-warning';
+                        if (type === 'available') badge = 'bg-success';
+                        return `<span class="badge ${badge}">${type}</span>`;
+                    }).join(' ');
+                }
+            } else {
+                changesBadges = '<span class="badge bg-secondary">No Changes</span>';
+            }
+            
+            row.innerHTML = `
+                <td>${formattedDate}</td>
+                <td>${snapshot.price ? `$${snapshot.price.toFixed(2)}` : 'N/A'}</td>
+                <td>
+                    <span class="badge ${snapshot.available ? 'bg-success' : 'bg-danger'}">
+                        ${snapshot.available ? 'Available' : 'Unavailable'}
+                    </span>
+                </td>
+                <td>${changesBadges}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-info toggle-details-btn">
+                        <i class="fas fa-chevron-down"></i> Details
+                    </button>
+                </td>
+            `;
+            
+            snapshotsBody.appendChild(row);
+            
+            // Create details row
+            const detailsRow = document.createElement('tr');
+            detailsRow.className = 'snapshot-details-row';
+            
+            const detailsCell = document.createElement('td');
+            detailsCell.colSpan = 5;
+            
+            const detailsContent = document.createElement('div');
+            detailsContent.className = 'snapshot-details d-none';
+            
+            // Generate details content
+            let detailsHtml = `
+                <div class="card mt-2 mb-3">
+                    <div class="card-body">
+                        <h6 class="card-title">${snapshot.title}</h6>
+                        <p class="text-muted">${snapshot.url}</p>
+                        
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <h6>Product Information</h6>
+                                <ul class="list-group">
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        Price
+                                        <span>${snapshot.price ? `$${snapshot.price.toFixed(2)}` : 'N/A'}</span>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        Availability
+                                        <span class="badge ${snapshot.available ? 'bg-success' : 'bg-danger'}">
+                                            ${snapshot.available ? 'Available' : 'Unavailable'}
+                                        </span>
+                                    </li>
+                                    <li class="list-group-item">
+                                        <small class="text-muted">${snapshot.availability_text || 'N/A'}</small>
+                                    </li>
+                                </ul>
+                            </div>
+            `;
+            
+            // Add details section if available
+            if (snapshot.details && Object.keys(snapshot.details).length > 0) {
+                detailsHtml += `
+                    <div class="col-md-6">
+                        <h6>Technical Details</h6>
+                        <ul class="list-group">
+                `;
+                
+                for (const [key, value] of Object.entries(snapshot.details)) {
+                    detailsHtml += `
+                        <li class="list-group-item">
+                            <strong>${key}:</strong> ${value}
+                        </li>
+                    `;
+                }
+                
+                detailsHtml += `
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            // Add changes section if available
+            if (snapshot.changes && Object.keys(snapshot.changes).length > 0 && !snapshot.changes.initial) {
+                detailsHtml += `
+                    <div class="col-12 mt-3">
+                        <h6>Changes Detected</h6>
+                        <ul class="list-group">
+                `;
+                
+                for (const [key, change] of Object.entries(snapshot.changes)) {
+                    if (key === 'details') {
+                        // Handle detailed changes
+                        detailsHtml += `
+                            <li class="list-group-item">
+                                <strong>Product Details Changes:</strong>
+                                <ul class="mt-2">
+                        `;
+                        
+                        for (const [detailKey, detailChange] of Object.entries(change)) {
+                            detailsHtml += `
+                                <li>
+                                    <strong>${detailKey}:</strong> 
+                                    <span class="text-danger">${detailChange.old || 'N/A'}</span> → 
+                                    <span class="text-success">${detailChange.new || 'N/A'}</span>
+                                </li>
+                            `;
+                        }
+                        
+                        detailsHtml += `
+                                </ul>
+                            </li>
+                        `;
+                    } else {
+                        // Handle simple changes
+                        detailsHtml += `
+                            <li class="list-group-item">
+                                <strong>${key}:</strong> 
+                                <span class="text-danger">${change.old}</span> → 
+                                <span class="text-success">${change.new}</span>
+                            </li>
+                        `;
+                    }
+                }
+                
+                detailsHtml += `
+                        </ul>
+                    </div>
+                `;
+            }
+            
+            detailsHtml += `
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            detailsContent.innerHTML = detailsHtml;
+            detailsCell.appendChild(detailsContent);
+            detailsRow.appendChild(detailsCell);
+            
+            snapshotsBody.appendChild(detailsRow);
+            
+            // Add event listener to toggle button
+            const toggleButton = row.querySelector('.toggle-details-btn');
+            toggleButton.addEventListener('click', function() {
+                detailsContent.classList.toggle('d-none');
+                const icon = this.querySelector('i');
+                if (detailsContent.classList.contains('d-none')) {
+                    icon.className = 'fas fa-chevron-down';
+                } else {
+                    icon.className = 'fas fa-chevron-up';
+                }
+            });
+        });
+    }
+}
+</script>
+{% endblock %}
